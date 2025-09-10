@@ -1,0 +1,3 @@
+# Convenience: hydra overrides for Lightning run
+defaults:
+  - override /trainer: lightning

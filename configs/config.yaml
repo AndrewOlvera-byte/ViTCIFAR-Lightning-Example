@@ -1,0 +1,24 @@
+# Top-level defaults (choose a run recipe below)
+defaults:
+  - data: cifar10
+  - model: vit_small
+  - optim: adamw
+  - trainer: lightning
+  - _self_
+
+exp_name: "cifar10_vit_sl"
+
+# Global training knobs
+seed: 42
+device: "cuda"
+precision: "bf16-mixed"  # fallback to "16-mixed" if bf16 unsupported
+channels_last: true
+cudnn_benchmark: true
+
+# Dataloader throughput knobs
+io:
+  batch_size: 512        # ~16GB GPU-friendly for this ViT; adjust if OOM
+  num_workers: 8         # set ~ to your CPU cores
+  prefetch_factor: 4
+  persistent_workers: true
+  pin_memory: true
