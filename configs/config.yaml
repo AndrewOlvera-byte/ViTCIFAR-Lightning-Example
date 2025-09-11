@@ -1,10 +1,7 @@
 # Top-level defaults (choose a run recipe below)
 defaults:
-  - data: cifar_10
-  - model: vit_small
-  - optim: adamw
-  - trainer: lightning
   - _self_
+  - exp: vit_cifar10
 
 exp_name: "cifar10_vit_sl"
 

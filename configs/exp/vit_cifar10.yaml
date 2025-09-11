@@ -1,0 +1,9 @@
+# @package _global_
+# Curated experiment: ViT small on CIFAR-10 with AdamW and Lightning trainer
+defaults:
+  - /data: cifar_10
+  - /model: vit_small
+  - /optim: adamw
+  - /trainer: lightning
+  - _self_
+
