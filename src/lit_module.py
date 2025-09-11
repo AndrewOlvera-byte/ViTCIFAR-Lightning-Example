@@ -6,7 +6,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 import lightning.pytorch as pl
 
 class LitClassifier(pl.LightningModule):
-    def __init__(self, model: nn.Module, lt: float, weight_decay: float, betas, min_lr: float, max_epochs: int, warmup_epochs: int):
+    def __init__(self, model: nn.Module, lr: float, weight_decay: float, betas, min_lr: float, max_epochs: int, warmup_epochs: int):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
         self.model = model

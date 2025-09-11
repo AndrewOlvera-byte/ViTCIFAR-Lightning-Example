@@ -1,6 +1,6 @@
 # Top-level defaults (choose a run recipe below)
 defaults:
-  - data: cifar10
+  - data: cifar_10
   - model: vit_small
   - optim: adamw
   - trainer: lightning
@@ -22,3 +22,11 @@ io:
   prefetch_factor: 4
   persistent_workers: true
   pin_memory: true
+
+# Hydra working directories: one-run = one folder under ./output or $OUTPUT_DIR
+hydra:
+  run:
+    dir: ${oc.env:OUTPUT_DIR, output}/run_${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: ${oc.env:OUTPUT_DIR, output}/multirun
+    subdir: run_${now:%Y-%m-%d_%H-%M-%S}
