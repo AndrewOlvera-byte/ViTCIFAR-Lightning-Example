@@ -2,6 +2,7 @@ import os
 import json
 import shutil
 from pathlib import Path
+import time
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import torch
@@ -153,8 +154,11 @@ def main(cfg: DictConfig):
         callbacks=[ckpt_cb, OneBasedTQDMProgressBar(refresh_rate=1)],
     )
 
+    # Track total pipeline runtime (training + evaluation)
+    _pipeline_t0 = time.perf_counter()
     trainer.fit(lit, datamodule=datamodule)
     trainer.test(lit, datamodule=datamodule)
+    _total_time_sec = float(time.perf_counter() - _pipeline_t0)
 
     # After training: export best bundle under run_dir/best
     best_dir = run_dir / "best"
@@ -174,12 +178,40 @@ def main(cfg: DictConfig):
             metrics[k] = float(v)
         except Exception:
             pass
+    # Enumerate saved checkpoints (excluding last.ckpt) to verify top-k saving
+    try:
+        saved_ckpt_files = sorted([
+            p.name for p in ckpt_dir.glob("*.ckpt") if p.name != "last.ckpt"
+        ])
+    except Exception:
+        saved_ckpt_files = []
+
+    # Collect top-k checkpoints and scores from the callback (best_k_models)
+    top_k_entries = []
+    try:
+        best_k_models = getattr(ckpt_cb, "best_k_models", {}) or {}
+        mode = getattr(ckpt_cb, "mode", "max")
+        sortable = [
+            {"filename": Path(path).name, "score": float(score)}
+            for path, score in best_k_models.items()
+        ]
+        reverse = True if str(mode).lower() == "max" else False
+        top_k_entries = sorted(sortable, key=lambda d: d["score"], reverse=reverse)
+    except Exception:
+        top_k_entries = []
     summary = {
         "best_checkpoint": best_ckpt_path.name if (best_ckpt_path and best_ckpt_path.exists()) else None,
         "best_score": float(ckpt_cb.best_model_score) if ckpt_cb.best_model_score is not None else None,
         "tb_dir": str(run_dir / "tb"),
         "ckpt_dir": str(ckpt_dir),
         "metrics": metrics,
+        # Checkpoint verification and configuration
+        "save_top_k": int(getattr(ckpt_cb, "save_top_k", -1)),
+        "saved_ckpts_count": len(saved_ckpt_files),
+        "saved_ckpts": saved_ckpt_files,
+        "top_k_checkpoints": top_k_entries,
+        # Total runtime
+        "total_time_sec": _total_time_sec,
     }
     (best_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 

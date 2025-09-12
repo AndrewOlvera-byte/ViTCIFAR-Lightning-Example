@@ -3,7 +3,6 @@ defaults:
   - exp: vit_cifar10
   - run: train_lightning
 
-# global knobs
 seed: 42
 device: cuda
 precision: bf16-mixed
