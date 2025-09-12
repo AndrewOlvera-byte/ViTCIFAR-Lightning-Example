@@ -4,7 +4,9 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 import lightning.pytorch as pl
+from src.registry import register_datamodule
 
+@register_datamodule("cifar10")
 class CIFAR10DataModule(pl.LightningDataModule):
     def __init__(self, root:str, download:bool, mean, std, batch_size: int, num_workers: int, pin_memory: bool, prefetch_factor: int, persistent_workers: bool):
         super().__init__()

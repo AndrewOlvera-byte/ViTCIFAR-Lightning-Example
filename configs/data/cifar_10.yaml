@@ -1,3 +1,4 @@
+name: cifar10
 root: ${oc.env:DATA_ROOT, ./data}
 download: true
 img_size: 32

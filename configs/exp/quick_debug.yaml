@@ -4,7 +4,9 @@ defaults:
   - /data: cifar_10
   - /model: vit_small
   - /optim: adamw
+  - /sched: cosine
   - /trainer: lightning
+  - /loss: cross_entropy
   - _self_
 
 # Fast iteration settings
@@ -16,3 +18,7 @@ trainer:
   
 io:
   batch_size: 128
+  num_workers: 8
+  prefetch_factor: 4
+  persistent_workers: true
+  pin_memory: true

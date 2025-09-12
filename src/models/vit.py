@@ -3,6 +3,8 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint as ckpt
+from src.registry import register_model
 
 class PatchEmbed(nn.Module):
     def __init__(self, image_size=32, patch_size=4, in_chans=3, embed_dim = 384):
@@ -49,6 +51,7 @@ class Block(nn.Module):
         x = x + self.mlp(self.norm2(x))
         return x
 
+@register_model("vit")
 class VisionTransformer(nn.Module):
     def __init__(
         self,
@@ -61,8 +64,10 @@ class VisionTransformer(nn.Module):
         num_classes=10,
         dropout=0.0,
         attn_dropout=0.0,
+        grad_ckpt: bool = False,
     ):
         super().__init__()
+        self.grad_ckpt = bool(grad_ckpt)
         self.patch_embed = PatchEmbed(image_size, patch_size, 3, embed_dim)
         num_patches = (image_size // patch_size) ** 2
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
@@ -94,8 +99,15 @@ class VisionTransformer(nn.Module):
         x = torch.cat([cls, x], dim=1)
         x = x + self.pos_embed
         x = self.pos_drop(x)
-        for blk in self.blocks:
-            x = blk(x)
+        if self.grad_ckpt and self.training:
+            for blk in self.blocks:
+                try:
+                    x = ckpt(blk, x, use_reentrant=False)
+                except TypeError:
+                    x = ckpt(blk, x)
+        else:
+            for blk in self.blocks:
+                x = blk(x)
         x = self.norm(x)
         cls_out = x[:, 0]
         return self.head(cls_out)

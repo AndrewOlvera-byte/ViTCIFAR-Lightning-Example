@@ -1,5 +1,5 @@
 # Dockerfile
-FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
+FROM pytorch/pytorch:2.7.0-cuda12.8-cudnn9-runtime
 
 ARG USER_ID=1000
 ARG GROUP_ID=1000

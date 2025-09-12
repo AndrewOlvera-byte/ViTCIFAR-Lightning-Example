@@ -1,0 +1,68 @@
+seed: 42
+device: cuda
+precision: bf16-mixed
+channels_last: true
+cudnn_benchmark: true
+io:
+  batch_size: 512
+  num_workers: 8
+  prefetch_factor: 4
+  persistent_workers: true
+  pin_memory: true
+data:
+  name: cifar10
+  root: ${oc.env:DATA_ROOT, ./data}
+  download: true
+  img_size: 32
+  mean:
+  - 0.4914
+  - 0.4822
+  - 0.4465
+  std:
+  - 0.2023
+  - 0.1994
+  - 0.201
+model:
+  _target_: src.models.vit.VisionTransformer
+  image_size: ${data.img_size}
+  patch_size: 4
+  embed_dim: 384
+  depth: 8
+  num_heads: 6
+  mlp_ratio: 4.0
+  num_classes: 10
+  dropout: 0.0
+  attn_dropout: 0.0
+  grad_ckpt: false
+optim:
+  name: adamw
+  lr: 0.0003
+  weight_decay: 0.05
+  betas:
+  - 0.9
+  - 0.999
+  warmup_epochs: 5
+  max_epochs: 60
+  min_lr: 1.0e-05
+  fused: true
+sched:
+  name: cosine
+  t_max: null
+  eta_min: 1.0e-05
+trainer:
+  max_epochs: ${optim.max_epochs}
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 50
+  devices: 1
+  num_sanity_val_steps: 0
+  accumulate_grad_batches: 1
+  compile:
+    enable: true
+    mode: max-autotune
+    fullgraph: false
+    dynamic: true
+loss:
+  name: cross_entropy
+  label_smoothing: 0.0
+  reduction: mean
+run: {}

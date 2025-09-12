@@ -8,47 +8,98 @@ import torch
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
-from hydra.utils import instantiate
 from hydra.core.hydra_config import HydraConfig
+from hydra.utils import instantiate
 from src.utils.seed import set_seed
 from src.utils.speed import speed_setup
+from src.utils.progress import OneBasedTQDMProgressBar
 from src.lit_module import LitClassifier
+from src.registry import (
+    MODEL_REGISTRY,
+    DATAMODULE_REGISTRY,
+    LOSS_REGISTRY,
+)
+# Side-effect imports to populate registries
+import src.models.vit  # noqa: F401
+import src.data.cifar10_datamodule  # noqa: F401
+import src.optimizers  # noqa: F401
+import src.losses  # noqa: F401
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     print(OmegaConf.to_yaml(cfg))
+    # Persist resolved config in the Hydra run dir (cwd is already the run dir)
+    try:
+        Path("config_dump.yaml").write_text(OmegaConf.to_yaml(cfg))
+    except Exception:
+        pass
     set_seed(cfg.seed)
     speed_setup(cfg.channels_last, cfg.cudnn_benchmark)
 
-    # Instantiate core components from Hydra
-    model = instantiate(cfg.model)                         # VisionTransformer
+    # Instantiate model: prefer Hydra instantiate when _target_ is provided; otherwise use registry by name
+    if isinstance(cfg.model, DictConfig) and "_target_" in cfg.model:
+        model = instantiate(cfg.model)
+    else:
+        model = MODEL_REGISTRY.build(
+            cfg.model.name,
+            image_size=cfg.model.image_size,
+            patch_size=cfg.model.patch_size,
+            embed_dim=cfg.model.embed_dim,
+            depth=cfg.model.depth,
+            num_heads=cfg.model.num_heads,
+            mlp_ratio=cfg.model.mlp_ratio,
+            num_classes=cfg.model.num_classes,
+            dropout=cfg.model.dropout,
+            attn_dropout=cfg.model.attn_dropout,
+        )
     if cfg.channels_last:
         # Safe for 2D inputs; ViT consumes 4D tensors before patching
         model = model.to(memory_format=torch.channels_last)
 
-    datamodule = instantiate(
-        {
-            "_target_": "src.data.cifar10_datamodule.CIFAR10DataModule",
-            "root": cfg.data.root,
-            "download": cfg.data.download,
-            "mean": cfg.data.mean,
-            "std": cfg.data.std,
-            "batch_size": cfg.io.batch_size,
-            "num_workers": cfg.io.num_workers,
-            "prefetch_factor": cfg.io.prefetch_factor,
-            "persistent_workers": cfg.io.persistent_workers,
-            "pin_memory": cfg.io.pin_memory,
-        }
+    if isinstance(cfg.data, DictConfig) and "_target_" in cfg.data:
+        datamodule = instantiate(
+            cfg.data,
+            batch_size=cfg.io.batch_size,
+            num_workers=cfg.io.num_workers,
+            prefetch_factor=cfg.io.prefetch_factor,
+            persistent_workers=cfg.io.persistent_workers,
+            pin_memory=cfg.io.pin_memory,
+        )
+    else:
+        datamodule = DATAMODULE_REGISTRY.build(
+            cfg.data.name,
+            root=cfg.data.root,
+            download=cfg.data.download,
+            mean=cfg.data.mean,
+            std=cfg.data.std,
+            batch_size=cfg.io.batch_size,
+            num_workers=cfg.io.num_workers,
+            prefetch_factor=cfg.io.prefetch_factor,
+            persistent_workers=cfg.io.persistent_workers,
+            pin_memory=cfg.io.pin_memory,
+        )
+
+    criterion = LOSS_REGISTRY.build(
+        cfg.loss.name,
+        label_smoothing=cfg.loss.label_smoothing,
+        reduction=cfg.loss.reduction,
     )
 
     lit = LitClassifier(
         model=model,
-        lr=cfg.optim.lr,
-        weight_decay=cfg.optim.weight_decay,
-        betas=cfg.optim.betas,
-        min_lr=cfg.optim.min_lr,
-        max_epochs=cfg.optim.max_epochs,
-        warmup_epochs=cfg.optim.warmup_epochs,
+        criterion=criterion,
+        optim_name=cfg.optim.name,
+        optim_kwargs={
+            "lr": cfg.optim.lr,
+            "betas": tuple(cfg.optim.betas),
+            "weight_decay": cfg.optim.weight_decay,
+            "fused": bool(getattr(cfg.optim, "fused", False)),
+        },
+        sched_name=cfg.sched.name,
+        sched_kwargs={
+            "t_max": int(cfg.sched.t_max) if cfg.sched.t_max is not None else int(cfg.optim.max_epochs),
+            "eta_min": cfg.sched.eta_min,
+        },
     )
 
     # Resolve Hydra run directory
@@ -76,6 +127,19 @@ def main(cfg: DictConfig):
     if requested_precision.startswith("bf16") and not bf16_supported:
         precision = "16-mixed"
 
+    # Optional model compile (Blackwell/CUDA 12.8 supported)
+    compile_cfg = getattr(cfg.trainer, "compile", None)
+    if compile_cfg and getattr(compile_cfg, "enable", False):
+        try:
+            model = torch.compile(
+                model,
+                mode=getattr(compile_cfg, "mode", "max-autotune"),
+                fullgraph=getattr(compile_cfg, "fullgraph", False),
+                dynamic=getattr(compile_cfg, "dynamic", True),
+            )
+        except Exception as e:
+            print(f"[warn] torch.compile disabled: {e}")
+
     trainer = pl.Trainer(
         accelerator="gpu",
         devices=cfg.trainer.devices,
@@ -83,8 +147,10 @@ def main(cfg: DictConfig):
         precision=precision,
         log_every_n_steps=cfg.trainer.log_every_n_steps,
         check_val_every_n_epoch=cfg.trainer.check_val_every_n_epoch,
+        num_sanity_val_steps=getattr(cfg.trainer, "num_sanity_val_steps", 0),
+        accumulate_grad_batches=getattr(cfg.trainer, "accumulate_grad_batches", 1),
         logger=tb_logger,
-        callbacks=[ckpt_cb],
+        callbacks=[ckpt_cb, OneBasedTQDMProgressBar(refresh_rate=1)],
     )
 
     trainer.fit(lit, datamodule=datamodule)

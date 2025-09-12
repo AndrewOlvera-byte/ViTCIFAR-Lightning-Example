@@ -9,42 +9,52 @@ Build the image (first time or after dependency changes):
 docker compose build --no-cache
 ```
 
-Start a training run with the base defaults from `configs/config.yaml`:
+Start a training run with the base defaults:
 
 ```bash
 docker compose run --rm train-lightning
 ```
 
-### Pick configs via CLI
+### Switch experiments (Hydra groups)
 
-You can select components directly from the CLI without editing files:
-
-```bash
-docker compose run --rm train-lightning \
-  python -m src.train_lightning \
-  model=vit_small data=cifar_10 optim=adamw trainer=lightning
-```
-
-### Use curated experiments
-
-Curated combos live under `configs/exp/`. Example:
+Experiments are Hydra groups registered via ConfigStore. Select them by name:
 
 ```bash
-docker compose run --rm train-lightning \
-  python -m src.train_lightning exp=vit_cifar10
+# Default (vit_cifar10)
+docker compose run --rm train-lightning
+
+# Quick debug run (smaller batch, few epochs)
+docker compose run --rm train-lightning exp=quick_debug
 ```
 
-This sets the defaults to:
+You can also override any field at the CLI:
 
-```yaml
-defaults:
-  - _self_
-  - exp: vit_cifar10
+```bash
+docker compose run --rm train-lightning exp=vit_cifar10 io.batch_size=256 trainer.devices=1
 ```
+
+### Registry-based components
+
+Models, datamodules, optimizers, schedulers, and losses are resolved via simple registries with decorators:
+
+```python
+from src.registry import register_model
+
+@register_model("vit")
+class VisionTransformer(nn.Module):
+    ...
+```
+
+- Model: `model.name=vit`
+- Data: `data.name=cifar10`
+- Optimizer: `optim.name=adamw`
+- Scheduler: `sched.name=cosine`
+- Loss: `loss.name=cross_entropy`
+
+This avoids fragile `_target_` strings and makes swapping components trivial.
 
 ### Notes
 
 - Hydra output directories default under `./output` or `${OUTPUT_DIR}` if set.
-- To see the resolved config at runtime, the script prints it on start.
-- You can still override any individual field, e.g. `io.batch_size=256`.
-- Note: because `exp` is now selected by default in `configs/config.yaml`, use `exp=quick_debug` to switch experiments. Using `+exp=quick_debug` would add a duplicate and Hydra will error.
+- The script prints the resolved config on start.
+- For a full error stack, set `HYDRA_FULL_ERROR=1`.

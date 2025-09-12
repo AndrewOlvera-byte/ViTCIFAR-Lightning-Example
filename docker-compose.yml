@@ -18,8 +18,7 @@ services:
       - OUTPUT_DIR=/workspace/output
     shm_size: "8g"         # helps with many DataLoader workers
     gpus: all              # enable NVIDIA GPUs
-    command: >
-      python -m src.train_lightning
+    entrypoint: ["/usr/bin/tini", "--", "python", "-m", "src.train_lightning"]
 
 volumes:
   pip-cache:

@@ -4,6 +4,8 @@ defaults:
   - /data: cifar_10
   - /model: vit_small
   - /optim: adamw
+  - /sched: cosine
   - /trainer: lightning
+  - /loss: cross_entropy
   - _self_
 
