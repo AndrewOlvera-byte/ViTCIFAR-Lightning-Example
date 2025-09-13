@@ -11,7 +11,7 @@ def speed_setup(channels_last: bool, cudnn_benchmark: bool):
         pass
     # Prefer Flash and mem-efficient SDPA when available
     try:
-        torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=True)
+        torch.nn.attention.sdpa_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=True)
     except Exception:
         pass
     torch.set_float32_matmul_precision("high")  # numerically safe speedup

@@ -2,7 +2,7 @@
 # Curated experiment: ViT small on CIFAR-10 with AdamW and Lightning trainer
 defaults:
   - /data: cifar_10
-  - /model: vit_small
+  - /model: vit_tiny
   - /optim: adamw
   - /sched: cosine
   - /trainer: lightning

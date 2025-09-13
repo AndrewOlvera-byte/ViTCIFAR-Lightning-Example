@@ -20,3 +20,10 @@ collator:
   mixup_alpha: 0.8
   cutmix_alpha: 1.0
   prob: 1.0         # apply to every batch; reduce to <1.0 to occasionally skip
+  schedule:
+    enable: true
+    type: cosine
+    start: 1.0
+    end: 0.0
+    start_epoch: 0
+    end_epoch: ${optim.max_epochs}

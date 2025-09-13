@@ -8,7 +8,7 @@ from omegaconf import DictConfig, OmegaConf
 import torch
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import TensorBoardLogger
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
 from hydra.core.hydra_config import HydraConfig
 from hydra.utils import instantiate
 from src.utils.seed import set_seed
@@ -25,6 +25,7 @@ import src.models.vit  # noqa: F401
 import src.data.cifar10_datamodule  # noqa: F401
 import src.optimizers  # noqa: F401
 import src.losses  # noqa: F401
+from src.utils.mixup_scheduler import MixupCutmixScheduler
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
@@ -80,11 +81,14 @@ def main(cfg: DictConfig):
             pin_memory=cfg.io.pin_memory,
         )
 
-    criterion = LOSS_REGISTRY.build(
-        cfg.loss.name,
-        label_smoothing=cfg.loss.label_smoothing,
-        reduction=cfg.loss.reduction,
-    )
+    # Loss: build with only supported kwargs to avoid missing-attribute errors
+    loss_cfg = OmegaConf.to_container(cfg.loss, resolve=True) if isinstance(cfg.loss, DictConfig) else dict(cfg.loss)
+    loss_name = loss_cfg.get("name")
+    loss_reduction = loss_cfg.get("reduction", "mean")
+    loss_kwargs = {"reduction": loss_reduction}
+    if loss_name == "cross_entropy":
+        loss_kwargs["label_smoothing"] = float(loss_cfg.get("label_smoothing", 0.0))
+    criterion = LOSS_REGISTRY.build(loss_name, **loss_kwargs)
 
     lit = LitClassifier(
         model=model,
@@ -146,18 +150,59 @@ def main(cfg: DictConfig):
         except Exception as e:
             print(f"[warn] torch.compile disabled: {e}")
 
+    # Handle fused AdamW + gradient clipping incompatibility with a hard guard
+    gradient_clip_val = float(getattr(cfg.trainer, "gradient_clip_val", 0.0))
+    fused_requested = bool(getattr(cfg.optim, "fused", False))
+    if fused_requested and gradient_clip_val > 0.0:
+        raise RuntimeError(
+            "Invalid configuration: optim.fused=True is not compatible with trainer.gradient_clip_val>0. "
+            "Set optim.fused=false to keep clipping, or set trainer.gradient_clip_val=0.0 to keep fused."
+        )
+
+    # Build callbacks list
+    callbacks = [ckpt_cb, OneBasedTQDMProgressBar(refresh_rate=1)]
+    if bool(getattr(cfg.trainer, "lr_monitor", True)):
+        callbacks.append(LearningRateMonitor(logging_interval="epoch"))
+
+    es_cfg = getattr(cfg.trainer, "early_stopping", None)
+    if es_cfg and bool(getattr(es_cfg, "enable", False)):
+        callbacks.append(
+            EarlyStopping(
+                monitor=str(getattr(es_cfg, "monitor", "val_acc")),
+                mode=str(getattr(es_cfg, "mode", "max")),
+                patience=int(getattr(es_cfg, "patience", 20)),
+                min_delta=float(getattr(es_cfg, "min_delta", 0.0)),
+            )
+        )
+
+    # Optional Mixup/CutMix schedule callback
+    coll_cfg = getattr(cfg.data, "collator", None)
+    sch_cfg = getattr(coll_cfg, "schedule", None) if coll_cfg is not None else None
+    if sch_cfg and bool(getattr(sch_cfg, "enable", False)):
+        callbacks.append(
+            MixupCutmixScheduler(
+                start=float(getattr(sch_cfg, "start", 1.0)),
+                end=float(getattr(sch_cfg, "end", 0.0)),
+                start_epoch=int(getattr(sch_cfg, "start_epoch", 0)),
+                end_epoch=int(getattr(sch_cfg, "end_epoch", cfg.trainer.max_epochs)),
+                schedule_type=str(getattr(sch_cfg, "type", "cosine")),
+            )
+        )
+
+    accelerator = str(getattr(cfg.trainer, "accelerator", "auto"))
+
     trainer = pl.Trainer(
-        accelerator="gpu",
+        accelerator=accelerator,
         devices=cfg.trainer.devices,
         max_epochs=cfg.trainer.max_epochs,
         precision=precision,
-        gradient_clip_val=getattr(cfg.trainer, "gradient_clip_val", 0.0),
+        gradient_clip_val=gradient_clip_val,
         log_every_n_steps=cfg.trainer.log_every_n_steps,
         check_val_every_n_epoch=cfg.trainer.check_val_every_n_epoch,
         num_sanity_val_steps=getattr(cfg.trainer, "num_sanity_val_steps", 0),
         accumulate_grad_batches=getattr(cfg.trainer, "accumulate_grad_batches", 1),
         logger=tb_logger,
-        callbacks=[ckpt_cb, OneBasedTQDMProgressBar(refresh_rate=1)],
+        callbacks=callbacks,
     )
 
     # Track total pipeline runtime (training + evaluation)

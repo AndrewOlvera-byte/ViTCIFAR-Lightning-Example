@@ -39,6 +39,24 @@ class CIFAR10DataModule(pl.LightningDataModule):
         self.collator_cfg = collator or {"enable": False}
         self.collate_fn: Optional[Callable] = None
 
+        # Live mixup/cutmix params (can be scheduled via callback)
+        self._mix_prob = float((self.collator_cfg or {}).get("prob", 0.0))
+        self._mixup_alpha = float((self.collator_cfg or {}).get("mixup_alpha", 0.0))
+        self._cutmix_alpha = float((self.collator_cfg or {}).get("cutmix_alpha", 0.0))
+
+    def set_mixup_params(
+        self,
+        prob: Optional[float] = None,
+        mixup_alpha: Optional[float] = None,
+        cutmix_alpha: Optional[float] = None,
+    ):
+        if prob is not None:
+            self._mix_prob = max(0.0, min(1.0, float(prob)))
+        if mixup_alpha is not None:
+            self._mixup_alpha = max(0.0, float(mixup_alpha))
+        if cutmix_alpha is not None:
+            self._cutmix_alpha = max(0.0, float(cutmix_alpha))
+
     def prepare_data(self):
         datasets.CIFAR10(self.root, train=True,  download=self.download)
         datasets.CIFAR10(self.root, train=False, download=self.download)
@@ -83,9 +101,6 @@ class CIFAR10DataModule(pl.LightningDataModule):
         # Prepare optional Mixup/CutMix collate
         if bool(self.collator_cfg.get("enable", False)):
             num_classes = int(self.collator_cfg.get("num_classes", 10))
-            mixup_alpha = float(self.collator_cfg.get("mixup_alpha", 0.8))
-            cutmix_alpha = float(self.collator_cfg.get("cutmix_alpha", 1.0))
-            prob = float(self.collator_cfg.get("prob", 1.0))
 
             def _one_hot(labels: torch.Tensor, num_classes: int) -> torch.Tensor:
                 return torch.nn.functional.one_hot(labels.to(torch.long), num_classes=num_classes).float()
@@ -111,18 +126,18 @@ class CIFAR10DataModule(pl.LightningDataModule):
                 if self._train_post_tf is not None:
                     # RandomErasing expects CHW per sample
                     images = torch.stack([self._train_post_tf(img) for img in images], dim=0)
-                if random.random() > prob:
+                if random.random() > self._mix_prob:
                     return images, targets  # no mix
                 # choose mode per batch
                 mode = "mixup" if random.random() < 0.5 else "cutmix"
                 perm = torch.randperm(images.size(0))
                 lam_m = 1.0
-                if mode == "mixup" and mixup_alpha > 0:
-                    lam = torch.distributions.Beta(mixup_alpha, mixup_alpha).sample().item()
+                if mode == "mixup" and self._mixup_alpha > 0:
+                    lam = torch.distributions.Beta(self._mixup_alpha, self._mixup_alpha).sample().item()
                     lam_m = float(lam)
                     images = lam * images + (1.0 - lam) * images[perm]
-                elif mode == "cutmix" and cutmix_alpha > 0:
-                    lam = torch.distributions.Beta(cutmix_alpha, cutmix_alpha).sample().item()
+                elif mode == "cutmix" and self._cutmix_alpha > 0:
+                    lam = torch.distributions.Beta(self._cutmix_alpha, self._cutmix_alpha).sample().item()
                     B, C, H, W = images.size()
                     x1, y1, x2, y2 = _rand_bbox(W, H, lam)
                     images[:, :, y1:y2, x1:x2] = images[perm, :, y1:y2, x1:x2]

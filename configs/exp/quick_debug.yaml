@@ -6,12 +6,13 @@ defaults:
   - /optim: adamw
   - /sched: cosine
   - /trainer: lightning
-  - /loss: cross_entropy
+  - /loss: soft_cross_entropy
   - _self_
 
 # Fast iteration settings
 optim:
   max_epochs: 5
+  fused: false
   
 trainer:
   check_val_every_n_epoch: 1

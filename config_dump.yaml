@@ -9,8 +9,11 @@ io:
   prefetch_factor: 4
   persistent_workers: true
   pin_memory: true
+ema:
+  enable: true
+  decay: 0.9999
 data:
-  name: cifar10
+  _target_: src.data.cifar10_datamodule.CIFAR10DataModule
   root: ${oc.env:DATA_ROOT, ./data}
   download: true
   img_size: 32
@@ -19,9 +22,27 @@ data:
   - 0.4822
   - 0.4465
   std:
-  - 0.2023
-  - 0.1994
-  - 0.201
+  - 0.247
+  - 0.2435
+  - 0.2616
+  aug:
+    random_crop:
+      size: 32
+      padding: 4
+    random_flip: true
+    randaugment:
+      enable: true
+      'n': 2
+      m: 9
+    random_erasing:
+      enable: true
+      p: 0.25
+  collator:
+    enable: true
+    num_classes: 10
+    mixup_alpha: 0.8
+    cutmix_alpha: 1.0
+    prob: 1.0
 model:
   _target_: src.models.vit.VisionTransformer
   image_size: ${data.img_size}
@@ -34,21 +55,29 @@ model:
   dropout: 0.0
   attn_dropout: 0.0
   grad_ckpt: false
+  drop_path: 0.1
+  bias_init_uniform_logits: true
 optim:
   name: adamw
-  lr: 0.0003
+  lr: 0.0005
   weight_decay: 0.05
   betas:
   - 0.9
   - 0.999
   warmup_epochs: 10
-  max_epochs: 200
-  min_lr: 1.0e-05
-  fused: true
+  max_epochs: 300
+  min_lr: 1.0e-06
+  fused: false
+  no_decay_keys:
+  - bias
+  - norm
+  - pos_embed
+  - cls_token
 sched:
   name: cosine
   t_max: null
-  eta_min: 1.0e-05
+  eta_min: 1.0e-06
+  warmup_epochs: ${optim.warmup_epochs}
 trainer:
   max_epochs: ${optim.max_epochs}
   check_val_every_n_epoch: 1
@@ -56,13 +85,13 @@ trainer:
   devices: 1
   num_sanity_val_steps: 0
   accumulate_grad_batches: 1
+  gradient_clip_val: 1.0
   compile:
     enable: true
     mode: max-autotune
     fullgraph: false
     dynamic: true
 loss:
-  name: cross_entropy
-  label_smoothing: 0.0
+  name: soft_cross_entropy
   reduction: mean
 run: {}

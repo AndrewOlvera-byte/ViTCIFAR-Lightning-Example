@@ -25,9 +25,26 @@ class SoftTargetCrossEntropy(nn.Module):
             raise ValueError("reduction must be one of: 'none', 'mean', 'sum'")
         self.reduction = reduction
 
-    def forward(self, logits: torch.Tensor, soft_targets: torch.Tensor) -> torch.Tensor:
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Supports both soft targets (B, C) and hard class indices (B,) or (B, 1).
+
+        - If targets is 1D indices or has a trailing singleton dimension, compute NLL over log-probs.
+        - If targets is 2D soft distributions matching logits shape, compute -sum(p * log q).
+        """
         log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
-        loss = -(soft_targets * log_probs).sum(dim=-1)
+
+        # Hard labels path: targets are class indices
+        if targets.dim() == 1 or (targets.dim() == 2 and targets.size(-1) == 1):
+            indices = targets.view(-1).long()
+            loss = torch.nn.functional.nll_loss(log_probs, indices, reduction="none")
+        else:
+            # Soft labels path: ensure shapes match
+            if targets.shape != logits.shape:
+                raise ValueError(
+                    f"SoftTargetCrossEntropy: targets shape {targets.shape} must match logits shape {logits.shape}"
+                )
+            loss = -(targets * log_probs).sum(dim=-1)
+
         if self.reduction == "mean":
             return loss.mean()
         if self.reduction == "sum":
