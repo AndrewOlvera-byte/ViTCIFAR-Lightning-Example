@@ -6,6 +6,6 @@ defaults:
   - /optim: adamw
   - /sched: cosine
   - /trainer: lightning
-  - /loss: cross_entropy
+  - /loss: soft_cross_entropy
   - _self_
 

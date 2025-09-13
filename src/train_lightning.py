@@ -100,7 +100,12 @@ def main(cfg: DictConfig):
         sched_kwargs={
             "t_max": int(cfg.sched.t_max) if cfg.sched.t_max is not None else int(cfg.optim.max_epochs),
             "eta_min": cfg.sched.eta_min,
+            "warmup_epochs": int(getattr(cfg.optim, "warmup_epochs", 0)),
+            "max_epochs": int(getattr(cfg.optim, "max_epochs", cfg.trainer.max_epochs)),
+            "min_lr": float(getattr(cfg.optim, "min_lr", cfg.sched.eta_min)),
         },
+        ema_enable=bool(getattr(cfg, "ema", {}).get("enable", False)),
+        ema_decay=float(getattr(cfg, "ema", {}).get("decay", 0.9999)),
     )
 
     # Resolve Hydra run directory
@@ -146,6 +151,7 @@ def main(cfg: DictConfig):
         devices=cfg.trainer.devices,
         max_epochs=cfg.trainer.max_epochs,
         precision=precision,
+        gradient_clip_val=getattr(cfg.trainer, "gradient_clip_val", 0.0),
         log_every_n_steps=cfg.trainer.log_every_n_steps,
         check_val_every_n_epoch=cfg.trainer.check_val_every_n_epoch,
         num_sanity_val_steps=getattr(cfg.trainer, "num_sanity_val_steps", 0),

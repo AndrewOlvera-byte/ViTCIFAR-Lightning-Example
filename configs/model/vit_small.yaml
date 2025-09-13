@@ -9,3 +9,5 @@ num_classes: 10
 dropout: 0.0
 attn_dropout: 0.0
 grad_ckpt: false
+drop_path: 0.1
+bias_init_uniform_logits: true

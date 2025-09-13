@@ -6,6 +6,25 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint as ckpt
 from src.registry import register_model
 
+
+class DropPath(nn.Module):
+    """Stochastic Depth per-sample (when applied in residual branches).
+
+    Reference: https://arxiv.org/abs/1603.09382 (as used in DeiT/ConvNeXt)
+    """
+    def __init__(self, drop_prob: float = 0.0) -> None:
+        super().__init__()
+        self.drop_prob = float(max(0.0, drop_prob))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.drop_prob == 0.0 or not self.training:
+            return x
+        keep_prob = 1.0 - self.drop_prob
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+        random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+        binary_mask = torch.floor(random_tensor)
+        return x.div(keep_prob) * binary_mask
+
 class PatchEmbed(nn.Module):
     def __init__(self, image_size=32, patch_size=4, in_chans=3, embed_dim = 384):
         super().__init__()
@@ -36,19 +55,20 @@ class MLP(nn.Module):
         return x
 
 class Block(nn.Module):
-    def __init__(self, dim, num_heads, mlp_ratio=4.0, dropout=0.0, attn_dropout=0.0):
+    def __init__(self, dim, num_heads, mlp_ratio=4.0, dropout=0.0, attn_dropout=0.0, drop_path: float = 0.0):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
         self.attn = nn.MultiheadAttention(dim, num_heads, dropout=attn_dropout, batch_first=True)
         self.norm2 = nn.LayerNorm(dim)
         self.mlp = MLP(dim, mlp_ratio, dropout)
+        self.drop_path = DropPath(drop_path)
     
     def forward(self, x):
         #Pre-LN ViT
         h = self.norm1(x)
         attn_out, _ = self.attn(h, h, h, need_weights=False)
-        x = x + attn_out
-        x = x + self.mlp(self.norm2(x))
+        x = x + self.drop_path(attn_out)
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
 @register_model("vit")
@@ -65,6 +85,8 @@ class VisionTransformer(nn.Module):
         dropout=0.0,
         attn_dropout=0.0,
         grad_ckpt: bool = False,
+        drop_path: float = 0.0,
+        bias_init_uniform_logits: bool = False,
     ):
         super().__init__()
         self.grad_ckpt = bool(grad_ckpt)
@@ -74,9 +96,11 @@ class VisionTransformer(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
         self.pos_drop = nn.Dropout(dropout)
 
+        # Stochastic depth decay rule: linearly scale [0, drop_path] over depth
+        dpr = torch.linspace(0.0, float(drop_path), steps=depth).tolist() if depth > 0 else []
         self.blocks = nn.ModuleList([
-            Block(embed_dim, num_heads, mlp_ratio, dropout, attn_dropout)
-            for _ in range(depth)
+            Block(embed_dim, num_heads, mlp_ratio, dropout, attn_dropout, drop_path=dpr[i])
+            for i in range(depth)
         ])
         self.norm = nn.LayerNorm(embed_dim)
         self.head = nn.Linear(embed_dim, num_classes)
@@ -84,6 +108,10 @@ class VisionTransformer(nn.Module):
         nn.init.trunc_normal_(self.pos_embed, std=0.02)
         nn.init.trunc_normal_(self.cls_token, std=0.02)
         self.apply(self._init_vit)
+        if bias_init_uniform_logits and hasattr(self.head, "bias") and self.head.bias is not None:
+            with torch.no_grad():
+                # Set bias to log(1/num_classes) to match a uniform prior
+                self.head.bias.fill_(-math.log(float(num_classes)))
 
     @staticmethod
     def _init_vit(m):

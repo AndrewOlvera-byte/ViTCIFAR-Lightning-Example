@@ -16,6 +16,11 @@ io:
   persistent_workers: true
   pin_memory: true
 
+# EMA control (experiment-level)
+ema:
+  enable: true
+  decay: 0.9999
+
 # Hydra working directories
 hydra:
   run:

@@ -1,9 +1,10 @@
 # Optimizer hyperparams for AdamW
 name: adamw
-lr: 3e-4
+lr: 5e-4   # base for batch=256; auto-scale at runtime
 weight_decay: 0.05
 betas: [0.9, 0.999]
 warmup_epochs: 10
-max_epochs: 200
-min_lr: 1e-5
+max_epochs: 300
+min_lr: 1e-6
 fused: true
+no_decay_keys: ["bias", "norm", "pos_embed", "cls_token"]
